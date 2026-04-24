@@ -45,7 +45,7 @@ This infrastructure follows AWS Well-Architected Framework principles: security,
 
 ## High-Level Traffic Flow
 
-![Architecture Diagram](./diagram/webapp_project2_automation.png)
+![Architecture Diagram](./diagram/162223.png)
 
 1. **User request** → Route 53 resolves domain to ALB DNS name
 2. **HTTP request (port 80)** → ALB listener redirects to HTTPS (302 redirect)
