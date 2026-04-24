@@ -1,0 +1,97 @@
+options:
+  max-time: 120
+
+definitions:
+  steps:
+    - step: &trivy-scan
+        name: Trivy Scan
+        runs-on:
+          - self.hosted
+          - linux.shell
+          - devrunner
+        # image: aquasec/trivy:latest
+        script:
+          - echo "Running Trivy scan"
+          - |
+              cd $BITBUCKET_CLONE_DIR
+              trivy fs \
+                --scanners vuln,secret \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                .
+              
+
+
+    - step: &build-artifact
+        name: Build Web Artifact (Latest Tag)
+        runs-on:
+          - self.hosted
+          - linux.shell
+          - devrunner
+        script:
+          - echo "Resolving with latest git tag"
+          - git fetch --tags https://$BITBUCKET_USER:$BITBUCKET_PASS@bitbucket.org/adeolaoriade/application_codes.git
+          - TAG=$(git describe --tags --abbrev=0)
+          - echo "Using tag $TAG"
+          - tar -czf "$TAG.tar.gz" -C App_repo .
+          - ls -lh "$TAG.tar.gz"
+          - aws s3 cp "$TAG.tar.gz" s3://$S3_BUCKET_NAME/artifacts/$TAG/$TAG.tar.gz
+
+        artifacts:
+          - "*.tar.gz"
+
+    - step: &deploy-code
+        name: Deploy Code to EC2
+        runs-on:
+          - self.hosted
+          - linux.shell
+          - devrunner
+        script:
+          - echo "Deploying application via SSM"
+
+          - git fetch --tags  https://$BITBUCKET_USER:$BITBUCKET_PASS@bitbucket.org/adeolaoriade/application_codes.git
+          - TAG=$(git describe --tags --abbrev=0)
+          - echo "Deploying tag $TAG"
+
+          - |
+              aws ssm send-command \
+                --document-name "AWS-RunShellScript" \
+                --targets "Key=tag:Name,Values=webapp-instance" \
+                --parameters commands="[
+                  \"set -e\",
+                  \"sudo mkdir -p /opt/webapp\",
+                  \"sudo aws s3 cp s3://${S3_BUCKET_NAME}/artifacts/${TAG}/${TAG}.tar.gz /opt/webapp/app.tar.gz\",
+                  \"cd /opt/webapp\",
+                  \"sudo tar -xzf app.tar.gz\",
+                  \"rm -f app.tar.gz\",
+                  \"rm -rf /var/www/html/*\",
+                  \"sudo cp -r ./* /var/www/html/\",
+                  \"sudo chown -R apache:apache /var/www/html\",
+                  \"sudo chmod -R 755 /var/www/html\",
+                  \"sudo systemctl reload httpd\"
+                ]" \
+                --timeout-seconds 600
+              
+
+pipelines:
+  branches:
+    Production:
+      - step: *trivy-scan
+      - step: *build-artifact
+      - step: *deploy-code
+
+  pull-requests:
+    '**':
+      - step: *trivy-scan
+  
+  custom:
+    RunTrivyScan:
+      - step: *trivy-scan
+    
+    BuildArtifacts:
+      - step: *build-artifact
+
+    DeployCode:
+      - step: *trivy-scan
+      - step: *build-artifact
+      - step: *deploy-code
