@@ -1,0 +1,91 @@
+options:
+  max-time: 120
+
+definitions:
+  steps:
+    - step: &trivy-scan
+        name: Trivy Scan
+        runs-on:
+          - devrunner
+          - self.hosted
+          - linux.shell
+        script:
+          - echo "Running Trivy scan"
+          - |
+              cd $BITBUCKET_CLONE_DIR
+              trivy fs \
+                --scanners vuln,secret \
+                --severity HIGH,CRITICAL \
+                --exit-code 1 \
+                .
+
+
+    - step: &gitleaks-scan
+        name: GitLeaks Secret Scan
+        runs-on:
+          - devrunner
+          - self.hosted
+          - linux.shell
+        script:
+          - echo "Running GitLeaks secrets scan"
+          - |
+              cd $BITBUCKET_CLONE_DIR
+              gitleaks detect \
+                --source . \
+                --no-git \
+                --redact \
+                --verbose \
+                --exit-code 1
+
+    - step: &terraform-apply
+        name: terraform apply
+        runs-on:
+          - devrunner
+          - self.hosted
+          - linux.shell
+        script:
+          - cd $BITBUCKET_CLONE_DIR
+          - export TF_IN_AUTOMATION=true
+          - export TF_VAR_aws_account_id=$AWS_ACCOUNT_ID
+          - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+          - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+          - terraform init -input=false -reconfigure
+          - terraform validate
+          - terraform plan
+          - terraform apply -auto-approve
+
+    - step: &terraform-destroy
+        name: terraform destroy
+        runs-on:
+          - devrunner
+          - self.hosted
+          - linux.shell
+        script:
+          - cd $BITBUCKET_CLONE_DIR
+          - export TF_IN_AUTOMATION=true
+          - export TF_VAR_aws_account_id=$AWS_ACCOUNT_ID
+          - export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+          - export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+          - terraform init -input=false -reconfigure
+          - terraform destroy -auto-approve
+
+pipelines:
+
+# Any push to main or personal branch -> security scans
+  branches:
+    main:
+      - step: *trivy-scan
+      - step: *gitleaks-scan
+
+    infrastructure_apply:
+      - step: *trivy-scan
+      - step: *gitleaks-scan
+
+  custom:
+    terraform-apply:
+      - step: 
+          <<: *terraform-apply
+
+    terraform-destroy:
+      - step: 
+          <<: *terraform-destroy
